@@ -1,0 +1,203 @@
+import pandas as pd
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report
+import threading
+import time
+from datetime import datetime
+import os
+
+class SwatProIDS:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("SHIELD v4.0 | SWaT Industrial IDS")
+        self.root.geometry("1100x850")
+        self.root.configure(bg="#0f172a") 
+        
+        # Internal State
+        self.data = None
+        self.full_df_with_ts = None # Synchronized storage for timestamps
+        self.model = RandomForestClassifier(n_estimators=100, n_jobs=-1, class_weight='balanced')
+        self.is_monitoring = False
+
+        self.apply_styles()
+        self.create_widgets()
+
+    def apply_styles(self):
+        style = ttk.Style()
+        style.theme_use('clam')
+        style.configure("TNotebook", background="#0f172a", borderwidth=0)
+        style.configure("TNotebook.Tab", background="#1e293b", foreground="#94a3b8", padding=[15, 5])
+        style.map("TNotebook.Tab", background=[("selected", "#3b82f6")], foreground=[("selected", "white")])
+
+    def create_widgets(self):
+        # --- HEADER ---
+        header = tk.Frame(self.root, bg="#1e293b", height=60)
+        header.pack(fill=tk.X)
+        tk.Label(header, text="🛡️ SHIELD: SWaT INCIDENT MONITOR", fg="#3b82f6", bg="#1e293b", font=("Segoe UI", 16, "bold")).pack(side=tk.LEFT, padx=20, pady=15)
+        
+        self.status_indicator = tk.Label(header, text="● SYSTEM READY", fg="#10b981", bg="#1e293b", font=("Segoe UI", 10, "bold"))
+        self.status_indicator.pack(side=tk.RIGHT, padx=20)
+
+        # --- CONTROL PANEL ---
+        ctrl = tk.Frame(self.root, bg="#0f172a", pady=10)
+        ctrl.pack(fill=tk.X, padx=20)
+
+        btn_style = {"font": ("Segoe UI", 9, "bold"), "width": 16, "relief": "flat", "cursor": "hand2"}
+        tk.Button(ctrl, text="📁 LOAD DATA", bg="#334155", fg="white", command=self.load_data, **btn_style).grid(row=0, column=0, padx=5)
+        self.train_btn = tk.Button(ctrl, text="⚙️ TRAIN AI", bg="#3b82f6", fg="white", command=self.start_training, **btn_style)
+        self.train_btn.grid(row=0, column=1, padx=5)
+        self.monitor_btn = tk.Button(ctrl, text="📡 START MONITOR", bg="#10b981", fg="white", command=self.toggle_monitoring, **btn_style)
+        self.monitor_btn.grid(row=0, column=2, padx=5)
+        tk.Button(ctrl, text="📥 EXPORT LOG", bg="#64748b", fg="white", command=self.export_logs, **btn_style).grid(row=0, column=3, padx=5)
+
+        # --- MAIN TABS ---
+        self.tabs = ttk.Notebook(self.root)
+        self.tabs.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+
+        # Tab 1: Attack Log
+        self.tab_attacks = tk.Frame(self.tabs, bg="#020617")
+        self.tabs.add(self.tab_attacks, text="  ATTACK LOG 🚨  ")
+        
+        self.attack_list = tk.Text(self.tab_attacks, bg="#020617", fg="#ef4444", font=("Consolas", 11), state=tk.DISABLED, borderwidth=0)
+        self.attack_list.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Tab 2: System Console
+        self.tab_console = tk.Frame(self.tabs, bg="#0f172a")
+        self.tabs.add(self.tab_console, text="  SYSTEM CONSOLE  ")
+        self.console_out = tk.Text(self.tab_console, bg="#0f172a", fg="#10b981", font=("Consolas", 10))
+        self.console_out.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Tab 3: Analytics
+        self.tab_stats = tk.Frame(self.tabs, bg="#0f172a")
+        self.tabs.add(self.tab_stats, text="  THREAT ANALYTICS  ")
+        self.analytics_canvas = None
+
+    def log_to_console(self, msg):
+        self.console_out.insert(tk.END, f"> {msg}\n")
+        self.console_out.see(tk.END)
+
+    def load_data(self):
+        try:
+            # Load and clean headers immediately
+            df = pd.read_csv("merged.csv")
+            df.columns = df.columns.str.strip()
+            
+            # Map labels
+            df["Normal/Attack"] = df["Normal/Attack"].astype(str).str.strip().map({"Normal": 0, "Attack": 1})
+            df = df.dropna(subset=["Normal/Attack"])
+            
+            # Save two versions: one with TS for display, one without for training
+            self.full_df_with_ts = df.copy()
+            self.data = df.drop(columns=["Timestamp"]) if "Timestamp" in df.columns else df
+            
+            self.log_to_console(f"Successfully loaded {len(self.data)} records.")
+            messagebox.showinfo("Success", "Dataset Synchronized.")
+        except Exception as e:
+            messagebox.showerror("Error", f"Data load failed: {e}")
+
+    def start_training(self):
+        if self.data is None: return messagebox.showwarning("Warning", "Load data first.")
+        self.train_btn.config(state=tk.DISABLED, text="TRAINING...")
+        threading.Thread(target=self.run_ml, daemon=True).start()
+
+    def run_ml(self):
+        try:
+            # Use a sample for training
+            sample_df = self.full_df_with_ts.sample(frac=0.2, random_state=42)
+            
+            X = sample_df.drop(columns=["Normal/Attack", "Timestamp"], errors='ignore')
+            y = sample_df["Normal/Attack"]
+            
+            split = int(len(X) * 0.8)
+            self.model.fit(X.iloc[:split], y.iloc[:split])
+            
+            y_pred = self.model.predict(X.iloc[split:])
+            report = classification_report(y.iloc[split:], y_pred, target_names=["Normal", "Attack"])
+            
+            # Identify indices of successful detections
+            test_subset_with_ts = sample_df.iloc[split:]
+            attack_indices = test_subset_with_ts.index[y_pred == 1].tolist()
+            
+            self.root.after(0, lambda: self.finish_training(report, X.columns, attack_indices))
+        except Exception as e:
+            self.root.after(0, lambda: messagebox.showerror("ML Error", str(e)))
+
+    def finish_training(self, report, columns, attack_indices):
+        self.train_btn.config(state=tk.NORMAL, text="⚙️ TRAIN AI")
+        self.log_to_console("Training complete.\n" + report)
+        
+        self.attack_list.config(state=tk.NORMAL)
+        self.attack_list.delete("1.0", tk.END)
+        self.attack_list.insert(tk.END, f"{'TIMESTAMP':<25} | {'STATUS'}\n" + "-"*40 + "\n")
+        
+        # Pull actual timestamps using the stored indices
+        for idx in attack_indices[:50]:
+            t_stamp = self.full_df_with_ts.at[idx, 'Timestamp']
+            self.attack_list.insert(tk.END, f"{t_stamp:<25} | 🚨 ATTACK DETECTED\n")
+        
+        self.attack_list.config(state=tk.DISABLED)
+        self.update_analytics(columns)
+
+    def update_analytics(self, columns):
+        if self.analytics_canvas: self.analytics_canvas.get_tk_widget().destroy()
+        fig, ax = plt.subplots(figsize=(7, 4), facecolor='#0f172a')
+        importances = pd.Series(self.model.feature_importances_, index=columns)
+        importances.nlargest(10).plot(kind='barh', color='#3b82f6', ax=ax)
+        ax.set_facecolor('#020617')
+        ax.tick_params(colors='white')
+        plt.tight_layout()
+        self.analytics_canvas = FigureCanvasTkAgg(fig, master=self.tab_stats)
+        self.analytics_canvas.draw()
+        self.analytics_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+    def toggle_monitoring(self):
+        if not hasattr(self.model, "classes_"):
+            return messagebox.showwarning("Incomplete", "Train model first.")
+        
+        if not self.is_monitoring:
+            self.is_monitoring = True
+            self.monitor_btn.config(text="🛑 STOP MONITOR", bg="#ef4444")
+            self.status_indicator.config(text="● MONITORING LIVE", fg="#3b82f6")
+            threading.Thread(target=self.run_stream, daemon=True).start()
+        else:
+            self.is_monitoring = False
+            self.monitor_btn.config(text="📡 START MONITOR", bg="#10b981")
+            self.status_indicator.config(text="● SYSTEM READY", fg="#10b981")
+
+    def run_stream(self):
+        # Filter for actual attack rows to simulate detections
+        sim_data = self.full_df_with_ts[self.full_df_with_ts["Normal/Attack"] == 1].tail(100)
+        
+        for idx, row in sim_data.iterrows():
+            if not self.is_monitoring: break
+            
+            # Prepare data for prediction (remove TS and Label)
+            features = row.drop(["Normal/Attack", "Timestamp"], errors='ignore').values.reshape(1, -1)
+            
+            if self.model.predict(features)[0] == 1:
+                ts = row['Timestamp']
+                self.root.after(0, lambda t=ts: self.add_to_attack_tab(t))
+            time.sleep(1.0)
+
+    def add_to_attack_tab(self, ts):
+        self.attack_list.config(state=tk.NORMAL)
+        # Inserts new detections at the top (under the header)
+        self.attack_list.insert("3.0", f"{ts:<25} | 🚨 ATTACK DETECTED\n")
+        self.attack_list.config(state=tk.DISABLED)
+
+    def export_logs(self):
+        content = self.attack_list.get("1.0", tk.END)
+        path = filedialog.asksaveasfilename(defaultextension=".txt", initialfile="Attack_History.txt")
+        if path:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            messagebox.showinfo("Exported", "Attack history saved.")
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = SwatProIDS(root)
+    root.mainloop()
