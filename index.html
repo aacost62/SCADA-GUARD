@@ -341,7 +341,11 @@
   <div class="container">
     <img src="static/images/dataFlow.png" alt="data roadmap" style="width:100%">
       <h2 class="subtitle has-text-centered">
-        Threat monitoring is no simple feat, but with Scada-Guard and an AI powered detection pipline the job becomes easy!<br>
+        Threat monitoring is no simple feat, but with Scada-Guard and an AI powered detection pipline the job becomes easy.  
+        We start off providing the model with standardized raw data to establish a baseline for proper funcionality in regards to key sensors. 
+        Then, we employ a random forest algorithm to classify log data as either being normal or malicious. 
+        Once fully trained, the model will be able to correctly identify active threats while also reducing the chances of a false positive
+        as it must be certain that threat threshold meets or exceeds 70%. <br>
       </h2>
   </div>
 </section>
@@ -383,7 +387,9 @@
         <div class="content has-text-justified">
           <!-- TODO: Replace with your paper abstract -->
           <p>
-            This serves as an Intrusion Detection System powered by machine learning and multiple datasets, designed to operate in an industrial setting. It takes in recent log data, analyzes it for any suspicious actions, and promptly reports it in user friendly GUI.
+            SCADA-GAURD serves to be a modern Intrusion Detection System(IDS) for the Industrial or Operational Technology Sectors.
+             It is powered through the random forest machine learing algorithm and has the capabilites to take in recent machine sendsor data and report back any detected threats.
+             It returns these threats via a user friendly GUI which provides a real-time graph of detected threats, a confidence meter, and the key sensors being affected.
           </p>
         </div>
       </div>
